@@ -13,16 +13,16 @@ observatory = EarthLocation(lat=28.2983 * u.deg, lon= -16.5097 * u.deg, height=2
 plot_label = 'Markarian 501'
 #source = "Mrk 501"
 #source = SkyCoord(ra='16:53:52.2', dec='+39:45:37', unit=(u.hourangle, u.deg)) #TevCAT
-#source = SkyCoord(ra='16:56:28', dec='+39:45:36', unit=(u.hourangle, u.deg), frame='fk5', equinox='J2000.0') #ASTRI
+source = SkyCoord(ra='16:56:28', dec='+39:45:36', unit=(u.hourangle, u.deg), frame='fk5', equinox='J2000.0') #ASTRI
 
 # CRAB
-plot_label = 'Crab Nebula'
+#plot_label = 'Crab Nebula'
 #source = "Crab"
 #source = SkyCoord(ra='05:34:30.9', dec='+22:00:44.5', unit=(u.hourangle, u.deg)) #TevCAT
-source = SkyCoord(ra='05:34:31', dec='+22:00:52', unit=(u.hourangle, u.deg)) #ASTRI
+#source = SkyCoord(ra='05:34:31', dec='+22:00:52', unit=(u.hourangle, u.deg)) #ASTRI
 
 
-date = "2025-12-14"   # YYYY-MM-DD, start of the observing night
+date = "2025-12-11"   # YYYY-MM-DD, start of the observing night
 query_time = "11:15:00"   # Time in hh:mm:ss format (e.g., "12:30:45" for 12:30:45 UTC), or None to skip
 
 # RESOLVE SOURCE
