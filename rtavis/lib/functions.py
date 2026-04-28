@@ -1,3 +1,78 @@
+import csv
+
+import astropy.units as u
+
+
+def write_visibility_csv(path, res, source_is_none, format_time_print):
+    """
+    Write visibility/moon results to CSV.
+
+    Kept as a reusable helper so CLI scripts can re-enable CSV export when needed.
+    """
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        if source_is_none:
+            w.writerow(
+                [
+                    "time_utc",
+                    "sun_alt_deg",
+                    "moon_alt_deg",
+                    "moon_illum_pct",
+                    "moon_phase_angle_deg",
+                    "moon_phase_deg_0_360",
+                    "moon_phase_name",
+                    "dark",
+                ]
+            )
+        else:
+            w.writerow(
+                [
+                    "time_utc",
+                    "src_alt_deg",
+                    "src_az_deg",
+                    "sun_alt_deg",
+                    "moon_alt_deg",
+                    "moon_sep_deg",
+                    "moon_illum_pct",
+                    "moon_phase_angle_deg",
+                    "moon_phase_deg_0_360",
+                    "moon_phase_name",
+                    "dark",
+                    "visible",
+                ]
+            )
+
+        for i, t in enumerate(res["times"]):
+            if source_is_none:
+                w.writerow(
+                    [
+                        format_time_print(t),
+                        res["sun_altaz"].alt[i].to_value(u.deg),
+                        res["moon_altaz"].alt[i].to_value(u.deg),
+                        float(res["moon_illum_pct"][i]),
+                        float(res["moon_phase_angle_deg"][i]),
+                        float(res["moon_phase_deg_0_360"][i]),
+                        str(res["moon_phase_name"][i]),
+                        bool(res["dark"][i]),
+                    ]
+                )
+            else:
+                w.writerow(
+                    [
+                        format_time_print(t),
+                        res["src_altaz"].alt[i].to_value(u.deg),
+                        res["src_altaz"].az[i].to_value(u.deg),
+                        res["sun_altaz"].alt[i].to_value(u.deg),
+                        res["moon_altaz"].alt[i].to_value(u.deg),
+                        res["moon_sep"][i].to_value(u.deg),
+                        float(res["moon_illum_pct"][i]),
+                        float(res["moon_phase_angle_deg"][i]),
+                        float(res["moon_phase_deg_0_360"][i]),
+                        str(res["moon_phase_name"][i]),
+                        bool(res["dark"][i]),
+                        bool(res["visible"][i]),
+                    ]
+                )
 import os
 from os.path import join, isfile
 import glob
