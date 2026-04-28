@@ -74,7 +74,6 @@ python rtavis/checkVisibilityWindow_ASTRI.py --help
 - `--source` or `--source-name`: resolve source name
 - `--ra` and `--dec`: provide source coordinates directly
 - `--plot`: save output plot
-- `--phase-label-step-deg`: spacing of phase labels on illumination panel
 
 ### Example commands
 
