@@ -79,13 +79,23 @@ def _moon_phase(times: Time) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.nda
 
     phase_0_360 = np.where(waxing, elong, 360.0 - elong)
 
-    # Nearest phase name
-    majors_deg = np.array([0.0, 90.0, 180.0, 270.0])
-    majors_name = np.array(["New", "Waxing half", "Full", "Waning half"], dtype=object)
-    # Circular distance in degrees
-    dist = np.abs(((phase_0_360[:, None] - majors_deg[None, :] + 180.0) % 360.0) - 180.0)
-    nearest = np.argmin(dist, axis=1)
-    names = majors_name[nearest]
+    # Nearest phase name on 8 bins (every 45 deg).
+    phase_deg = np.array([0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0])
+    phase_names = np.array(
+        [
+            "New",
+            "Waxing first quarter",
+            "Waxing half",
+            "Waxing last quarter",
+            "Full",
+            "Waning first quarter",
+            "Waning half",
+            "Waning last quarter",
+        ],
+        dtype=object,
+    )
+    dist = np.abs(((phase_0_360[:, None] - phase_deg[None, :] + 180.0) % 360.0) - 180.0)
+    names = phase_names[np.argmin(dist, axis=1)]
 
     return illum, elong, phase_0_360, names
 
@@ -114,10 +124,22 @@ def _overlay_phase_markers(ax, times_dt, phase_deg_0_360: np.ndarray, *, label_s
     end_deg = float(phase_deg_0_360[-1])
 
     def _major_name(d: float) -> str:
-        majors_deg = np.array([0.0, 90.0, 180.0, 270.0])
-        majors_name = np.array(["New", "Waxing half", "Full", "Waning half"], dtype=object)
-        dist = np.abs(((d - majors_deg + 180.0) % 360.0) - 180.0)
-        return str(majors_name[int(np.argmin(dist))])
+        phase_deg = np.array([0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0])
+        phase_names = np.array(
+            [
+                "New",
+                "Waxing first quarter",
+                "Waxing half",
+                "Waxing last quarter",
+                "Full",
+                "Waning first quarter",
+                "Waning half",
+                "Waning last quarter",
+            ],
+            dtype=object,
+        )
+        dist = np.abs(((d - phase_deg + 180.0) % 360.0) - 180.0)
+        return str(phase_names[int(np.argmin(dist))])
 
     # Degree shown is the continuous phase angle in [0, 360):
     # New=0/360, Waxing half=90, Full=180, Waning half=270.
@@ -131,7 +153,7 @@ def _overlay_phase_markers(ax, times_dt, phase_deg_0_360: np.ndarray, *, label_s
         transform=ax.transAxes,
         va="top",
         ha="left",
-        fontsize=9,
+        fontsize=12,
         color="purple",
         bbox=dict(boxstyle="round,pad=0.25", facecolor="white", alpha=0.6, edgecolor="none"),
     )
@@ -142,7 +164,7 @@ def _overlay_phase_markers(ax, times_dt, phase_deg_0_360: np.ndarray, *, label_s
         transform=ax.transAxes,
         va="top",
         ha="right",
-        fontsize=9,
+        fontsize=12,
         color="purple",
         bbox=dict(boxstyle="round,pad=0.25", facecolor="white", alpha=0.6, edgecolor="none"),
     )
@@ -170,7 +192,7 @@ def _overlay_phase_markers(ax, times_dt, phase_deg_0_360: np.ndarray, *, label_s
                 rotation=0,
                 va="bottom",
                 ha="center",
-                fontsize=9,
+                fontsize=12,
                 color="purple",
                 bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.6, edgecolor="none"),
             )
