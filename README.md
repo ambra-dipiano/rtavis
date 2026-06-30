@@ -100,3 +100,35 @@ With source coordinates:
 ```bash
 python rtavis/checkVisibilityWindow_ASTRI.py --start "2026-04-28" --end "2026-05-10" --plot source_window.png --ra "16:56:28" --dec "+39:45:36"
 ```
+
+## Lid open/close veto vs Moon during transits (ASTRI)
+
+When operating with Moon illumination above 50%, lids must be closed during telescope transits if the Moon is too close angularly to the pointing direction (primary mirror) or to the opposite horizon direction (secondary mirror).
+
+Script:
+
+```bash
+python rtavis/checkLidVeto_ASTRI.py --help
+```
+
+### Main options
+
+- `--start` and `--end`: UTC time window
+- `--date`: convenience single-night mode
+- `--source` or `--ra` / `--dec`: pointing (and optional source) coordinates
+- `--pointing-ra` / `--pointing-dec`: separate pointing if different from source
+- `--primary-veto-deg`: Moon–pointing veto cone (default 30 deg)
+- `--secondary-veto-deg`: Moon–opposite veto cone (default 50 deg)
+- `--plot`: time-series plot (separations, illumination, lid closed periods)
+- `--plot-sky`: radar-style sky view (allowed vs forbidden sky)
+- `--sky-time`: UTC epoch for sky plot (default: mid-window)
+
+### Example commands
+
+```bash
+python rtavis/checkLidVeto_ASTRI.py --start "2026-04-28" --end "2026-05-10" --source "Mrk 501" --plot lid_veto_timeseries.png --plot-sky lid_veto_sky.png
+```
+
+```bash
+python rtavis/checkLidVeto_ASTRI.py --date "2025-12-11" --ra "16:56:28" --dec "+39:45:36" --primary-veto-deg 30 --secondary-veto-deg 50 --plot lid_night.png --plot-sky lid_night_sky.png --sky-time "2025-12-11T23:00:00"
+```
