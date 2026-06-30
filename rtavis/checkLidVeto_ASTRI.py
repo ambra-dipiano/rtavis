@@ -16,8 +16,8 @@ POINTING_LINESTYLE = "-"
 SOURCE_COLOR = "darkorange"
 VETO_PRIMARY_COLOR = "crimson"
 VETO_SECONDARY_COLOR = "darkviolet"
-LIDS_CLOSED_COLOR = "#0d2d4d"  # dark blue — lids closed zones
-LIDS_OPEN_COLOR = "#d6e8f7"  # light blue — lids open
+LIDS_OPEN_COLOR = "#0d2d4d"  # dark blue — lids open (pointing patch on sky view)
+LIDS_CLOSED_COLOR = "#d6e8f7"  # light blue — lids closed (moon / transit patch on sky view)
 SKY_GRID_COLOR = "#ffffff"
 
 
@@ -71,17 +71,17 @@ def _sep_deg(a: SkyCoord, b: SkyCoord) -> u.Quantity:
 
 
 @dataclass(frozen=True)
-class LidVetoInputs:
+class LidInputs:
     pointing: SkyCoord
     source: Optional[SkyCoord]
     start: Time
     end: Time
     step: u.Quantity
-    closed_pointing_deg: float
-    closed_opposite_deg: float
+    open_pointing_deg: float
+    open_opposite_deg: float
 
 
-def compute_lid_veto(inp: LidVetoInputs):
+def compute_lids(inp: LidInputs):
     if inp.end <= inp.start:
         raise ValueError("--end must be after --start")
 
@@ -100,10 +100,10 @@ def compute_lid_veto(inp: LidVetoInputs):
     sep_primary = _sep_deg(moon, inp.pointing).to(u.deg)
     sep_secondary = _sep_deg(moon, opposite_sky).to(u.deg)
 
-    closed_by_pointing = sep_primary < inp.closed_pointing_deg * u.deg
-    closed_by_opposite = sep_secondary < inp.closed_opposite_deg * u.deg
-    lids_closed = closed_by_pointing | closed_by_opposite
-    lids_open = ~lids_closed
+    open_by_pointing = sep_primary >= inp.open_pointing_deg * u.deg
+    open_by_opposite = sep_secondary >= inp.open_opposite_deg * u.deg
+    lids_open = open_by_pointing & open_by_opposite
+    lids_closed = ~lids_open
 
     source_altaz = None
     sep_source = None
@@ -124,10 +124,10 @@ def compute_lid_veto(inp: LidVetoInputs):
         "sep_primary_deg": sep_primary,
         "sep_secondary_deg": sep_secondary,
         "sep_source_deg": sep_source,
-        "closed_by_pointing": closed_by_pointing,
-        "closed_by_opposite": closed_by_opposite,
-        "lids_closed": lids_closed,
+        "open_by_pointing": open_by_pointing,
+        "open_by_opposite": open_by_opposite,
         "lids_open": lids_open,
+        "lids_closed": lids_closed,
     }
 
 
@@ -148,7 +148,7 @@ def _sky_disk_mask(
 def _plot_time_series(
     path: str,
     res: dict,
-    inp: LidVetoInputs,
+    inp: LidInputs,
     pointing_label: str,
     source_label: Optional[str],
     has_distinct_source: bool,
@@ -196,7 +196,7 @@ def _plot_time_series(
 
     pad_p = max(0.5, (sep_p.max() - sep_p.min()) * 0.15)
     ax_p.plot(times_dt, sep_p, color=VETO_PRIMARY_COLOR, linewidth=2, label="Moon–pointing")
-    ax_p.axhline(inp.closed_pointing_deg, color=VETO_PRIMARY_COLOR, linestyle="--", linewidth=1, alpha=0.7, label=f"Closed limit {inp.closed_pointing_deg:.0f} deg")
+    ax_p.axhline(inp.open_pointing_deg, color=VETO_PRIMARY_COLOR, linestyle="--", linewidth=1, alpha=0.7, label=f"Open limit {inp.open_pointing_deg:.0f} deg")
     ax_p.fill_between(times_dt, sep_p.min() - pad_p, sep_p.max() + pad_p, where=res["lids_closed"], color="gray", alpha=0.15)
     ax_p.set_ylabel("Moon Separation (deg)")
     ax_p.set_ylim(sep_p.min() - pad_p, sep_p.max() + pad_p)
@@ -206,7 +206,7 @@ def _plot_time_series(
 
     pad_s = max(1.0, (sep_s.max() - sep_s.min()) * 0.08)
     ax_s.plot(times_dt, sep_s, color=VETO_SECONDARY_COLOR, linewidth=2, label="Moon–opposite")
-    ax_s.axhline(inp.closed_opposite_deg, color=VETO_SECONDARY_COLOR, linestyle="--", linewidth=1, alpha=0.7, label=f"Closed limit {inp.closed_opposite_deg:.0f} deg")
+    ax_s.axhline(inp.open_opposite_deg, color=VETO_SECONDARY_COLOR, linestyle="--", linewidth=1, alpha=0.7, label=f"Open limit {inp.open_opposite_deg:.0f} deg")
     ax_s.fill_between(times_dt, 0, sep_s.max() + pad_s, where=res["lids_closed"], color="gray", alpha=0.15, label="Lids closed")
     ax_s.set_ylabel("Moon Separation (deg)")
     ax_s.set_ylim(max(0, sep_s.min() - pad_s), sep_s.max() + pad_s)
@@ -229,29 +229,30 @@ def _altaz_to_polar(altaz: SkyCoord) -> Tuple[np.ndarray, np.ndarray]:
     return zenith, theta
 
 
-def _lids_closed_now(
+def _lids_open_now(
     moon: SkyCoord,
     pointing: SkyCoord,
     opposite_sky: SkyCoord,
-    closed_pointing_deg: float,
-    closed_opposite_deg: float,
+    open_pointing_deg: float,
+    open_opposite_deg: float,
 ) -> bool:
     sep_p = _sep_deg(moon, pointing).to_value(u.deg)
     sep_s = _sep_deg(moon, opposite_sky).to_value(u.deg)
-    return (sep_p < closed_pointing_deg) or (sep_s < closed_opposite_deg)
+    return (sep_p >= open_pointing_deg) and (sep_s >= open_opposite_deg)
 
 
-def _sky_lids_closed_zones(
+def _sky_lids_open_zones(
     alt_grid_deg: np.ndarray,
     az_grid_deg: np.ndarray,
     pointing: SkyCoord,
     opposite_sky: SkyCoord,
-    closed_pointing_deg: float,
-    closed_opposite_deg: float,
+    open_pointing_deg: float,
+    open_opposite_deg: float,
     frame: AltAz,
 ) -> np.ndarray:
-    near_pointing = _sky_disk_mask(alt_grid_deg, az_grid_deg, pointing, closed_pointing_deg, frame)
-    near_opposite = _sky_disk_mask(alt_grid_deg, az_grid_deg, opposite_sky, closed_opposite_deg, frame)
+    """Sky patch around pointing (+ antipode when above horizon): lids open on sky view."""
+    near_pointing = _sky_disk_mask(alt_grid_deg, az_grid_deg, pointing, open_pointing_deg, frame)
+    near_opposite = _sky_disk_mask(alt_grid_deg, az_grid_deg, opposite_sky, open_opposite_deg, frame)
     return near_pointing | near_opposite
 
 
@@ -260,7 +261,7 @@ def _plot_sky_view(
     t: Time,
     pointing: SkyCoord,
     source: Optional[SkyCoord],
-    inp: LidVetoInputs,
+    inp: LidInputs,
     pointing_label: str,
     source_label: Optional[str],
     has_distinct_source: bool,
@@ -283,31 +284,31 @@ def _plot_sky_view(
     r_mesh = 90.0 - alt_mesh
     theta_mesh = np.deg2rad(az_mesh)
 
-    lids_closed_zone = _sky_lids_closed_zones(
+    lids_open_zone = _sky_lids_open_zones(
         alt_grid, az_grid, pointing, opposite_sky,
-        inp.closed_pointing_deg, inp.closed_opposite_deg, frame,
+        inp.open_pointing_deg, inp.open_opposite_deg, frame,
     )
-    zone = np.where(lids_closed_zone, 1.0, 0.0)
+    zone = np.where(lids_open_zone, 0.0, 1.0)
 
-    lids_closed_now = _lids_closed_now(moon, pointing, opposite_sky, inp.closed_pointing_deg, inp.closed_opposite_deg)
-    status = "LIDS CLOSED" if lids_closed_now else "LIDS OPEN"
+    lids_open_now = _lids_open_now(moon, pointing, opposite_sky, inp.open_pointing_deg, inp.open_opposite_deg)
+    status = "LIDS OPEN" if lids_open_now else "LIDS CLOSED"
 
     fig, ax = plt.subplots(figsize=(9, 9), subplot_kw={"projection": "polar"})
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
     ax.set_rlim(90, 0)
-    ax.set_facecolor(LIDS_OPEN_COLOR)
+    ax.set_facecolor(LIDS_CLOSED_COLOR)
 
     # Altitude rings: label zenith angle from horizon (0) to zenith (90).
     alt_ticks = np.arange(0, 91, 15)
     ax.set_yticks(alt_ticks)
-    ax.set_yticklabels([f"{90 - int(t)}" for t in alt_ticks], fontsize=7)
+    ax.set_yticklabels([f"{90 - int(t)}" for t in alt_ticks], fontsize=10)
     ax.set_rlabel_position(22.5)
 
     # Azimuth spokes every 30 deg (degrees, not cardinal names).
     az_step = 30
     az_ticks = np.arange(0, 360, az_step)
-    ax.set_thetagrids(az_ticks, labels=[f"{int(a)}" for a in az_ticks], fontsize=7)
+    ax.set_thetagrids(az_ticks, labels=[f"{int(a)}" for a in az_ticks], fontsize=10)
 
     ax.pcolormesh(
         theta_mesh, r_mesh, zone,
@@ -333,17 +334,12 @@ def _plot_sky_view(
     ax.plot(th_p, r_p, "o", color=POINTING_COLOR, markersize=10, zorder=10)
     ax.plot(th_m, r_m, "*", color=MOON_COLOR, markersize=16, zorder=11)
 
-    ax.set_title(
-        f"{pointing_label}  |  {_format_time_print(t)} UTC\n"
-        f"Alt (deg) on rings, az (deg) on spokes",
-        fontsize=10,
-        pad=14,
-    )
+    ax.set_title(f"{pointing_label}  |  {_format_time_print(t)} UTC", fontsize=11, pad=14)
 
     ax.legend(
         handles=[
-            Patch(facecolor=LIDS_CLOSED_COLOR, edgecolor=LIDS_CLOSED_COLOR, label="Lids closed"),
-            Patch(facecolor=LIDS_OPEN_COLOR, edgecolor="#9bb8d3", label="Lids open"),
+            Patch(facecolor=LIDS_OPEN_COLOR, edgecolor=LIDS_OPEN_COLOR, label="Lids open"),
+            Patch(facecolor=LIDS_CLOSED_COLOR, edgecolor="#9bb8d3", label="Lids closed"),
             Line2D([0], [0], marker="o", color="w", markerfacecolor=POINTING_COLOR, markersize=8, linestyle="None", label="Pointing"),
             Line2D([0], [0], marker="*", color="w", markerfacecolor=MOON_COLOR, markersize=12, linestyle="None", label="Moon"),
         ],
@@ -378,22 +374,24 @@ def main():
     win.add_argument("--date", type=str, help="Single-night mode: YYYY-MM-DD (uses [date-1h, date+1d+1h]).")
     win.add_argument("--step", type=str, default="10m", help="Time step. Default: 10m")
 
-    lim = ap.add_argument_group("Lid closed limits (angular distance on sky)")
+    lim = ap.add_argument_group("Lid open limits (angular distance on sky)")
     lim.add_argument(
+        "--open-pointing-deg",
         "--closed-pointing-deg",
         "--primary-veto-deg",
-        dest="closed_pointing_deg",
+        dest="open_pointing_deg",
         type=float,
         default=30.0,
-        help="Lids closed if Moon within this angle of pointing. Default: 30",
+        help="Lids open if Moon at least this angle from pointing. Default: 30",
     )
     lim.add_argument(
+        "--open-opposite-deg",
         "--closed-opposite-deg",
         "--secondary-veto-deg",
-        dest="closed_opposite_deg",
+        dest="open_opposite_deg",
         type=float,
         default=50.0,
-        help="Lids closed if Moon within this angle of pointing antipode (180 deg on sky). Default: 50",
+        help="Lids open if Moon at least this angle from pointing antipode (180 deg on sky). Default: 50",
     )
 
     out = ap.add_argument_group("Outputs")
@@ -444,16 +442,16 @@ def main():
             pass
 
     step = _parse_step(args.step)
-    inp = LidVetoInputs(
+    inp = LidInputs(
         pointing=pointing,
         source=source,
         start=start,
         end=end,
         step=step,
-        closed_pointing_deg=float(args.closed_pointing_deg),
-        closed_opposite_deg=float(args.closed_opposite_deg),
+        open_pointing_deg=float(args.open_pointing_deg),
+        open_opposite_deg=float(args.open_opposite_deg),
     )
-    res = compute_lid_veto(inp)
+    res = compute_lids(inp)
 
     print("Observatory: ASTRI (Teide)")
     print(f"Pointing: {pointing_label}  ({pointing.to_string('hmsdms')})")
@@ -461,14 +459,15 @@ def main():
         print(f"Source: {source_label}  ({source.to_string('hmsdms')})")
     print(f"Window (UTC): {_format_time_print(start)}  ->  {_format_time_print(end)}   step={step}")
     print(
-        f"Lids closed when: Moon < {inp.closed_pointing_deg:.1f} deg from pointing "
-        f"OR Moon < {inp.closed_opposite_deg:.1f} deg from pointing antipode"
+        f"Lids open when: Moon >= {inp.open_pointing_deg:.1f} deg from pointing "
+        f"AND Moon >= {inp.open_opposite_deg:.1f} deg from pointing antipode"
     )
 
-    closed = res["lids_closed"]
-    n = len(closed)
-    print(f"\nLids closed samples: {np.sum(closed)}/{n} ({100.0 * np.mean(closed):.1f}%)")
-    if np.any(closed):
+    open_mask = res["lids_open"]
+    n = len(open_mask)
+    print(f"\nLids open samples: {np.sum(open_mask)}/{n} ({100.0 * np.mean(open_mask):.1f}%)")
+    if not np.all(open_mask):
+        closed = res["lids_closed"]
         i0 = np.where(closed)[0][0]
         i1 = np.where(closed)[0][-1]
         print(f"First closed: {_format_time_print(res['times'][i0])}")
@@ -483,8 +482,8 @@ def main():
     print(f"  Illumination (%): min={np.min(illum):.1f}  med={np.median(illum):.1f}  max={np.max(illum):.1f}")
     print(f"  Sep to pointing (deg): min={np.min(sep_p):.2f}  med={np.median(sep_p):.2f}  max={np.max(sep_p):.2f}")
     print(f"  Sep to opposite (deg):   min={np.min(sep_s):.2f}  med={np.median(sep_s):.2f}  max={np.max(sep_s):.2f}")
-    print(f"  Closed by pointing:  {np.sum(res['closed_by_pointing'])} samples")
-    print(f"  Closed by opposite:  {np.sum(res['closed_by_opposite'])} samples")
+    print(f"  Open by pointing:  {np.sum(res['open_by_pointing'])} samples")
+    print(f"  Open by opposite:  {np.sum(res['open_by_opposite'])} samples")
 
     if args.plot:
         _plot_time_series(args.plot, res, inp, pointing_label, source_label, has_distinct_source)
