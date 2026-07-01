@@ -17,7 +17,7 @@ SOURCE_COLOR = "darkorange"
 VETO_PRIMARY_COLOR = "crimson"
 VETO_SECONDARY_COLOR = "darkviolet"
 LIDS_OPEN_COLOR = "#0d2d4d"  # dark blue — lids open (pointing patch on sky view)
-LIDS_CLOSED_COLOR = "#b5d0e8"  # light blue — lids closed (slightly darker for white grid labels)
+LIDS_CLOSED_COLOR = "#44a6fc"  # light blue — lids closed (slightly darker for white grid labels)
 SKY_GRID_COLOR = "#ffffff"
 
 
@@ -160,8 +160,8 @@ def _plot_time_series(
     sep_p = res["sep_primary_deg"].to_value(u.deg)
     sep_s = res["sep_secondary_deg"].to_value(u.deg)
 
-    fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True, height_ratios=[2, 1, 1.2])
-    ax_alt, ax_illum, ax_sep = axes
+    fig, axes = plt.subplots(4, 1, figsize=(14, 11), sharex=True, height_ratios=[2, 1, 1, 1])
+    ax_alt, ax_illum, ax_p, ax_s = axes
 
     ax_alt.plot(
         times_dt,
@@ -194,21 +194,27 @@ def _plot_time_series(
     ax_illum.grid(True, alpha=0.3)
     ax_illum.legend(loc="lower center", fontsize=8)
 
-    pad = max(1.0, max(sep_p.max() - sep_p.min(), sep_s.max() - sep_s.min()) * 0.12)
-    ylo = min(sep_p.min(), sep_s.min()) - pad
-    yhi = max(sep_p.max(), sep_s.max()) + pad
-    ax_sep.plot(times_dt, sep_p, color=VETO_PRIMARY_COLOR, linewidth=2, label="Moon–pointing")
-    ax_sep.plot(times_dt, sep_s, color=VETO_SECONDARY_COLOR, linewidth=2, label="Moon–opposite")
-    ax_sep.axhline(inp.open_pointing_deg, color=VETO_PRIMARY_COLOR, linestyle="--", linewidth=1, alpha=0.7, label=f"Open limit pointing {inp.open_pointing_deg:.0f} deg")
-    ax_sep.axhline(inp.open_opposite_deg, color=VETO_SECONDARY_COLOR, linestyle="--", linewidth=1, alpha=0.7, label=f"Open limit opposite {inp.open_opposite_deg:.0f} deg")
-    ax_sep.fill_between(times_dt, ylo, yhi, where=res["lids_closed"], color="gray", alpha=0.15, label="Lids closed")
-    ax_sep.set_ylabel("Sep. (deg)")
-    ax_sep.set_ylim(max(0, ylo), yhi)
-    ax_sep.grid(True, alpha=0.3)
-    ax_sep.legend(loc=0, fontsize=8)
-    ax_sep.set_title("Moon separation vs pointing and antipode", fontsize=9)
-    ax_sep.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d\n%H:%M"))
-    ax_sep.set_xlabel("Time (UTC)")
+    pad_p = max(0.5, (sep_p.max() - sep_p.min()) * 0.15)
+    ax_p.plot(times_dt, sep_p, color=VETO_PRIMARY_COLOR, linewidth=2, label="Moon–pointing")
+    ax_p.axhline(inp.open_pointing_deg, color=VETO_PRIMARY_COLOR, linestyle="--", linewidth=1, alpha=0.7, label=f"Open limit {inp.open_pointing_deg:.0f} deg")
+    ax_p.fill_between(times_dt, sep_p.min() - pad_p, sep_p.max() + pad_p, where=res["lids_closed"], color="gray", alpha=0.15)
+    ax_p.set_ylabel("Sep. (deg)")
+    ax_p.set_ylim(sep_p.min() - pad_p, sep_p.max() + pad_p)
+    ax_p.grid(True, alpha=0.3)
+    ax_p.legend(loc=0, fontsize=8)
+    ax_p.set_title("Moon–pointing separation", fontsize=9)
+
+    pad_s = max(1.0, (sep_s.max() - sep_s.min()) * 0.08)
+    ax_s.plot(times_dt, sep_s, color=VETO_SECONDARY_COLOR, linewidth=2, label="Moon–opposite")
+    ax_s.axhline(inp.open_opposite_deg, color=VETO_SECONDARY_COLOR, linestyle="--", linewidth=1, alpha=0.7, label=f"Open limit {inp.open_opposite_deg:.0f} deg")
+    ax_s.fill_between(times_dt, sep_s.min() - pad_s, sep_s.max() + pad_s, where=res["lids_closed"], color="gray", alpha=0.15, label="Lids closed")
+    ax_s.set_ylabel("Sep. (deg)")
+    ax_s.set_ylim(sep_s.min() - pad_s, sep_s.max() + pad_s)
+    ax_s.grid(True, alpha=0.3)
+    ax_s.legend(loc=0, fontsize=8)
+    ax_s.set_title("Moon–opposite separation", fontsize=9)
+    ax_s.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d\n%H:%M"))
+    ax_s.set_xlabel("Time (UTC)")
 
     fig.autofmt_xdate(rotation=0, ha="center")
     plt.tight_layout()
