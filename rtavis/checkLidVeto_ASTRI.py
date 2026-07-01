@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import numpy as np
 import astropy.units as u
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_moon, get_sun
+from astropy.coordinates.name_resolve import NameResolveError
 from astropy.time import Time
 from typing import Optional, Tuple
 
@@ -25,6 +26,44 @@ def _parse_time(s: str) -> Time:
     return Time(s.replace(" ", "T"), scale="utc")
 
 
+def _is_date_only(s: str) -> bool:
+    normalized = s.strip().replace(" ", "T")
+    return "T" not in normalized and ":" not in normalized
+
+
+def _resolve_window_and_sky_time(
+    date: Optional[str],
+    start_str: Optional[str],
+    end_str: Optional[str],
+) -> Tuple[Time, Time, Time]:
+    """
+    Resolve time-series window and sky-view epoch (UTC).
+
+    --date YYYY-MM-DD           -> sky at midnight; night window [date-1h, date+1d+1h]
+    --date YYYY-MM-DDTHH:MM:SS  -> sky at that instant; same night window for calendar date
+    --start / --end             -> sky at mid-window
+    (none)                      -> today UTC at midnight
+    """
+    if date:
+        normalized = date.strip().replace(" ", "T")
+        day = Time(normalized.split("T")[0], scale="utc")
+        t_sky = day if _is_date_only(date) else _parse_time(date)
+        start = day - 1 * u.hour
+        end = day + 1 * u.day + 1 * u.hour
+        return start, end, t_sky
+
+    if start_str and end_str:
+        start = _parse_time(start_str)
+        end = _parse_time(end_str)
+        t_sky = start + (end - start) / 2
+        return start, end, t_sky
+
+    day = Time(Time.now().strftime("%Y-%m-%d"), scale="utc")
+    start = day - 1 * u.hour
+    end = day + 1 * u.day + 1 * u.hour
+    return start, end, day
+
+
 def _format_time_print(t: Time) -> str:
     return t.iso.split(".")[0]
 
@@ -42,16 +81,24 @@ def _parse_step(step: str) -> u.Quantity:
 
 
 def _resolve_coord(name: Optional[str], ra: Optional[str], dec: Optional[str], label_default: str) -> Tuple[SkyCoord, str]:
-    if name:
-        coord = SkyCoord.from_name(name).transform_to("fk5")
-        return coord, name
+    """Resolve pointing/source from --ra/--dec or from astropy Sesame (--source name)."""
     if ra and dec:
         try:
             coord = SkyCoord(ra=float(ra) * u.deg, dec=float(dec) * u.deg, frame="fk5", equinox="J2000.0")
         except ValueError:
             coord = SkyCoord(ra=ra, dec=dec, unit=(u.hourangle, u.deg), frame="fk5", equinox="J2000.0")
-        return coord, label_default
-    raise ValueError("Provide --source/--pointing-name OR both RA and Dec")
+        label = name or label_default
+        return coord, label
+    if name:
+        try:
+            coord = SkyCoord.from_name(name).transform_to("fk5")
+        except NameResolveError as exc:
+            raise ValueError(
+                f"Could not resolve {name!r} with astropy SkyCoord.from_name (Sesame). "
+                "Pass --ra and --dec instead, or use a name Sesame knows (e.g. 'Cygnus X-3')."
+            ) from exc
+        return coord, name
+    raise ValueError("Provide --source (Sesame name) OR both --ra and --dec")
 
 
 def _moon_illumination_percent(times: Time) -> np.ndarray:
@@ -361,9 +408,9 @@ def main():
     )
 
     tgt = ap.add_argument_group("Pointing / source")
-    tgt.add_argument("--source", "--source-name", dest="source_name", type=str, help="Source name (Sesame). Used as pointing if pointing not set.")
-    tgt.add_argument("--ra", type=str, help="RA (pointing or source).")
-    tgt.add_argument("--dec", type=str, help="Dec (pointing or source).")
+    tgt.add_argument("--source", "--source-name", dest="source_name", type=str, help="Source label or Sesame name (SkyCoord.from_name).")
+    tgt.add_argument("--ra", type=str, help="RA (degrees or hh:mm:ss). Use with --dec instead of --source name.")
+    tgt.add_argument("--dec", type=str, help="Dec (degrees or dd:mm:ss). Use with --ra instead of --source name.")
     tgt.add_argument("--pointing-name", type=str, help="Pointing name if different from source.")
     tgt.add_argument("--pointing-ra", type=str, help="Pointing RA if different from source.")
     tgt.add_argument("--pointing-dec", type=str, help="Pointing Dec if different from source.")
@@ -372,7 +419,14 @@ def main():
     win = ap.add_argument_group("Time window (UTC)")
     win.add_argument("--start", type=str, help="Start datetime UTC.")
     win.add_argument("--end", type=str, help="End datetime UTC.")
-    win.add_argument("--date", type=str, help="Single-night mode: YYYY-MM-DD (uses [date-1h, date+1d+1h]).")
+    win.add_argument(
+        "--date",
+        type=str,
+        default=None,
+        help="UTC date/time. Date only (YYYY-MM-DD) -> sky view at midnight; "
+        "with time (YYYY-MM-DDTHH:MM:SS) -> sky view at that instant. "
+        "Night window is [date-1h, date+1d+1h]. Default: today at midnight.",
+    )
     win.add_argument("--step", type=str, default="10m", help="Time step. Default: 10m")
 
     lim = ap.add_argument_group("Lid open limits (angular distance on sky)")
@@ -397,36 +451,34 @@ def main():
 
     out = ap.add_argument_group("Outputs")
     out.add_argument("--plot", type=str, default=None, help="Save time-series plot.")
-    out.add_argument("--plot-sky-view", "--plot-sky", dest="plot_sky_view", type=str, default=None, help="Save sky-view snapshot (NOW).")
-    out.add_argument("--sky-time", type=str, default=None, help="UTC time for sky view. Default: mid-window.")
+    out.add_argument("--plot-sky-view", "--plot-sky", dest="plot_sky_view", type=str, default=None, help="Save sky-view snapshot at --date epoch.")
 
     args = ap.parse_args()
 
-    if args.date:
-        start = Time(args.date, scale="utc") - 1 * u.hour
-        end = Time(args.date, scale="utc") + 1 * u.day + 1 * u.hour
-    else:
-        if not args.start or not args.end:
-            ap.error("Provide either --date OR both --start and --end")
-        start = _parse_time(args.start)
-        end = _parse_time(args.end)
+    start, end, t_sky = _resolve_window_and_sky_time(args.date, args.start, args.end)
+    if args.start or args.end:
+        if not (args.start and args.end):
+            ap.error("Provide both --start and --end, or use --date instead")
 
     # Pointing
-    if args.pointing_name or (args.pointing_ra and args.pointing_dec):
-        pointing, pointing_label = _resolve_coord(
-            args.pointing_name,
-            args.pointing_ra,
-            args.pointing_dec,
-            args.label or "Pointing",
-        )
-        if args.label:
-            pointing_label = args.label
-    elif args.source_name or (args.ra and args.dec):
-        pointing, pointing_label = _resolve_coord(args.source_name, args.ra, args.dec, args.label or "Target")
-        if args.label:
-            pointing_label = args.label
-    else:
-        ap.error("Provide pointing coordinates (--ra/--dec or --source) or separate --pointing-ra/--pointing-dec")
+    try:
+        if args.pointing_name or (args.pointing_ra and args.pointing_dec):
+            pointing, pointing_label = _resolve_coord(
+                args.pointing_name,
+                args.pointing_ra,
+                args.pointing_dec,
+                args.label or "Pointing",
+            )
+            if args.label:
+                pointing_label = args.label
+        elif args.source_name or (args.ra and args.dec):
+            pointing, pointing_label = _resolve_coord(args.source_name, args.ra, args.dec, args.label or "Target")
+            if args.label:
+                pointing_label = args.label
+        else:
+            ap.error("Provide --source or --ra/--dec (or separate --pointing-ra/--pointing-dec)")
+    except ValueError as exc:
+        ap.error(str(exc))
 
     # Optional distinct source
     source = None
@@ -491,10 +543,6 @@ def main():
         print(f"\nSaved plot: {args.plot}")
 
     if args.plot_sky_view:
-        if args.sky_time:
-            t_sky = _parse_time(args.sky_time)
-        else:
-            t_sky = start + (end - start) / 2
         status = _plot_sky_view(
             args.plot_sky_view,
             t_sky,
