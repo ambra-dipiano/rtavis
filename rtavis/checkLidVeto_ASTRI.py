@@ -17,7 +17,7 @@ SOURCE_COLOR = "darkorange"
 VETO_PRIMARY_COLOR = "crimson"
 VETO_SECONDARY_COLOR = "darkviolet"
 LIDS_OPEN_COLOR = "#0d2d4d"  # dark blue — lids open (pointing patch on sky view)
-LIDS_CLOSED_COLOR = "#d6e8f7"  # light blue — lids closed (moon / transit patch on sky view)
+LIDS_CLOSED_COLOR = "#b5d0e8"  # light blue — lids closed (slightly darker for white grid labels)
 SKY_GRID_COLOR = "#ffffff"
 
 
@@ -160,8 +160,8 @@ def _plot_time_series(
     sep_p = res["sep_primary_deg"].to_value(u.deg)
     sep_s = res["sep_secondary_deg"].to_value(u.deg)
 
-    fig, axes = plt.subplots(4, 1, figsize=(14, 11), sharex=True, height_ratios=[2, 1, 1, 1])
-    ax_alt, ax_illum, ax_p, ax_s = axes
+    fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True, height_ratios=[2, 1, 1.2])
+    ax_alt, ax_illum, ax_sep = axes
 
     ax_alt.plot(
         times_dt,
@@ -194,27 +194,21 @@ def _plot_time_series(
     ax_illum.grid(True, alpha=0.3)
     ax_illum.legend(loc="lower center", fontsize=8)
 
-    pad_p = max(0.5, (sep_p.max() - sep_p.min()) * 0.15)
-    ax_p.plot(times_dt, sep_p, color=VETO_PRIMARY_COLOR, linewidth=2, label="Moon–pointing")
-    ax_p.axhline(inp.open_pointing_deg, color=VETO_PRIMARY_COLOR, linestyle="--", linewidth=1, alpha=0.7, label=f"Open limit {inp.open_pointing_deg:.0f} deg")
-    ax_p.fill_between(times_dt, sep_p.min() - pad_p, sep_p.max() + pad_p, where=res["lids_closed"], color="gray", alpha=0.15)
-    ax_p.set_ylabel("Moon Separation (deg)")
-    ax_p.set_ylim(sep_p.min() - pad_p, sep_p.max() + pad_p)
-    ax_p.grid(True, alpha=0.3)
-    ax_p.legend(loc=0, fontsize=8)
-    ax_p.set_title("Moon–pointing separation (Moon proper motion vs fixed target)", fontsize=9)
-
-    pad_s = max(1.0, (sep_s.max() - sep_s.min()) * 0.08)
-    ax_s.plot(times_dt, sep_s, color=VETO_SECONDARY_COLOR, linewidth=2, label="Moon–opposite")
-    ax_s.axhline(inp.open_opposite_deg, color=VETO_SECONDARY_COLOR, linestyle="--", linewidth=1, alpha=0.7, label=f"Open limit {inp.open_opposite_deg:.0f} deg")
-    ax_s.fill_between(times_dt, 0, sep_s.max() + pad_s, where=res["lids_closed"], color="gray", alpha=0.15, label="Lids closed")
-    ax_s.set_ylabel("Moon Separation (deg)")
-    ax_s.set_ylim(max(0, sep_s.min() - pad_s), sep_s.max() + pad_s)
-    ax_s.grid(True, alpha=0.3)
-    ax_s.legend(loc=0, fontsize=8)
-    ax_s.set_title("Moon–opposite separation (Moon proper motion vs fixed antipode)", fontsize=9)
-    ax_s.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d\n%H:%M"))
-    ax_s.set_xlabel("Time (UTC)")
+    pad = max(1.0, max(sep_p.max() - sep_p.min(), sep_s.max() - sep_s.min()) * 0.12)
+    ylo = min(sep_p.min(), sep_s.min()) - pad
+    yhi = max(sep_p.max(), sep_s.max()) + pad
+    ax_sep.plot(times_dt, sep_p, color=VETO_PRIMARY_COLOR, linewidth=2, label="Moon–pointing")
+    ax_sep.plot(times_dt, sep_s, color=VETO_SECONDARY_COLOR, linewidth=2, label="Moon–opposite")
+    ax_sep.axhline(inp.open_pointing_deg, color=VETO_PRIMARY_COLOR, linestyle="--", linewidth=1, alpha=0.7, label=f"Open limit pointing {inp.open_pointing_deg:.0f} deg")
+    ax_sep.axhline(inp.open_opposite_deg, color=VETO_SECONDARY_COLOR, linestyle="--", linewidth=1, alpha=0.7, label=f"Open limit opposite {inp.open_opposite_deg:.0f} deg")
+    ax_sep.fill_between(times_dt, ylo, yhi, where=res["lids_closed"], color="gray", alpha=0.15, label="Lids closed")
+    ax_sep.set_ylabel("Sep. (deg)")
+    ax_sep.set_ylim(max(0, ylo), yhi)
+    ax_sep.grid(True, alpha=0.3)
+    ax_sep.legend(loc=0, fontsize=8)
+    ax_sep.set_title("Moon separation vs pointing and antipode", fontsize=9)
+    ax_sep.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d\n%H:%M"))
+    ax_sep.set_xlabel("Time (UTC)")
 
     fig.autofmt_xdate(rotation=0, ha="center")
     plt.tight_layout()
@@ -302,13 +296,14 @@ def _plot_sky_view(
     # Altitude rings: label zenith angle from horizon (0) to zenith (90).
     alt_ticks = np.arange(0, 91, 15)
     ax.set_yticks(alt_ticks)
-    ax.set_yticklabels([f"{90 - int(t)}" for t in alt_ticks], fontsize=10)
+    ax.set_yticklabels([f"{90 - int(t)}" for t in alt_ticks], fontsize=10, color=SKY_GRID_COLOR)
     ax.set_rlabel_position(22.5)
 
     # Azimuth spokes every 30 deg (degrees, not cardinal names).
     az_step = 30
     az_ticks = np.arange(0, 360, az_step)
-    ax.set_thetagrids(az_ticks, labels=[f"{int(a)}" for a in az_ticks], fontsize=10)
+    ax.set_thetagrids(az_ticks, labels=[f"{int(a)}" for a in az_ticks], fontsize=10, color=SKY_GRID_COLOR)
+    ax.tick_params(axis="both", colors=SKY_GRID_COLOR, labelsize=10)
 
     ax.pcolormesh(
         theta_mesh, r_mesh, zone,
@@ -331,17 +326,17 @@ def _plot_sky_view(
 
     r_p, th_p = _altaz_to_polar(pnt)
     r_m, th_m = _altaz_to_polar(moon_az)
-    ax.plot(th_p, r_p, "o", color=POINTING_COLOR, markersize=10, zorder=10)
-    ax.plot(th_m, r_m, "*", color=MOON_COLOR, markersize=16, zorder=11)
+    ax.plot(th_p, r_p, "*", color=POINTING_COLOR, markersize=16, zorder=10)
+    ax.plot(th_m, r_m, "o", color=MOON_COLOR, markersize=10, zorder=11)
 
     ax.set_title(f"{pointing_label}  |  {_format_time_print(t)} UTC", fontsize=11, pad=14)
 
     ax.legend(
         handles=[
             Patch(facecolor=LIDS_OPEN_COLOR, edgecolor=LIDS_OPEN_COLOR, label="Lids open"),
-            Patch(facecolor=LIDS_CLOSED_COLOR, edgecolor="#9bb8d3", label="Lids closed"),
-            Line2D([0], [0], marker="o", color="w", markerfacecolor=POINTING_COLOR, markersize=8, linestyle="None", label="Pointing"),
-            Line2D([0], [0], marker="*", color="w", markerfacecolor=MOON_COLOR, markersize=12, linestyle="None", label="Moon"),
+            Patch(facecolor=LIDS_CLOSED_COLOR, edgecolor="#8eb5d6", label="Lids closed"),
+            Line2D([0], [0], marker="*", color="w", markerfacecolor=POINTING_COLOR, markersize=12, linestyle="None", label="Pointing"),
+            Line2D([0], [0], marker="o", color="w", markerfacecolor=MOON_COLOR, markersize=8, linestyle="None", label="Moon"),
         ],
         loc="upper left",
         bbox_to_anchor=(1.02, 1.0),
