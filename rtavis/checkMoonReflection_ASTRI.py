@@ -1,9 +1,9 @@
 """
-ASTRI Moon reflection veto: safe observing windows and animated RA/Dec sky view.
+ASTRI Moon reflection veto: safe observing windows and sky views.
 
 Given a source (pointing) and an observing night (astronomical dusk → dawn),
 reports when the Moon is NOT in the M1 or M2 reflection zones on the celestial
-sphere, and optionally saves an animated full-sky RA/Dec map.
+sphere, and optionally saves Aitoff (RA/Dec) and polar (Alt/Az) sky snapshots.
 
 Reflection zones (angular separation from pointing):
   M1 — cap within ``m1-radius-deg`` (default 30°)
@@ -410,17 +410,44 @@ def _plot_time_series(
     plt.close(fig)
 
 
+def _sky_legend_handles(inp: ReflectionInputs, *, include_horizon: bool = True):
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+
+    handles = [
+        Patch(facecolor=M1_ZONE_COLOR, alpha=M1_ZONE_ALPHA, label="Moon in M1"),
+        Patch(facecolor=M2_ZONE_COLOR, alpha=M2_ZONE_ALPHA, label="Moon in M2"),
+    ]
+    if include_horizon:
+        handles.append(
+            Patch(facecolor=BELOW_HORIZON_COLOR, alpha=BELOW_HORIZON_ALPHA, label="Below ASTRI horizon")
+        )
+    handles.extend(
+        [
+            Line2D([0], [0], marker="*", color="w", markerfacecolor=SOURCE_COLOR, ms=10, ls="None", label="Pointing"),
+            Line2D([0], [0], marker="o", color="w", markerfacecolor=MOON_COLOR, ms=8, ls="None", label="Moon"),
+            Line2D([0], [0], marker="x", color=M2_ZONE_COLOR, ms=8, mew=2, ls="None", label="Antipode (M2 centre)"),
+            Line2D([0], [0], color=FOV_EDGE_COLOR, lw=1.5, label=f"FOV ~{inp.fov_deg:.0f}°"),
+        ]
+    )
+    return handles
+
+
+def _altaz_to_polar(altaz: SkyCoord) -> Tuple[np.ndarray, np.ndarray]:
+    """Local sky → polar: r = zenith angle (deg), theta = azimuth (rad, N up, E right)."""
+    zenith = (90.0 * u.deg - altaz.alt).to_value(u.deg)
+    theta = np.deg2rad(altaz.az.to_value(u.deg))
+    return zenith, theta
+
+
 def _draw_sky_axes(
     ax,
     inp: ReflectionInputs,
     label: str,
     t: Time,
     status: str,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Draw static sky layers. Returns (ra_rad, dec_rad) grids for horizon updates."""
-    from matplotlib.lines import Line2D
-    from matplotlib.patches import Patch
-
+) -> None:
+    """Aitoff RA/Dec sky with M1/M2 zones, horizon mask, pointing, antipode."""
     ax.set_facecolor(SAFE_SKY_COLOR)
     ax.grid(True, color=GRID_COLOR, alpha=0.35, lw=0.5)
     _style_aitoff_axes(ax)
@@ -428,13 +455,10 @@ def _draw_sky_axes(
     ra_grid, dec_grid, m1_mask, m2_mask = _sky_zone_map(
         inp.pointing, inp.m1_radius_deg, inp.m2_sep_min_deg, inp.m2_sep_max_deg,
     )
-    # Grid already in [-180, 180); convert to radians for Aitoff.
     ra_rad = np.deg2rad(ra_grid)
     dec_rad = np.deg2rad(dec_grid)
     below = _below_horizon_mask(ra_grid, dec_grid, t)
 
-    # Show reflection zones only where they are above the local horizon:
-    # below-horizon sky cannot illuminate the mirrors.
     ax.contourf(
         ra_rad, dec_rad, (m2_mask & ~below).astype(float),
         levels=[0.5, 1.5], colors=[M2_ZONE_COLOR], alpha=M2_ZONE_ALPHA, zorder=1,
@@ -448,9 +472,7 @@ def _draw_sky_axes(
         levels=[0.5, 1.5], colors=[BELOW_HORIZON_COLOR], alpha=BELOW_HORIZON_ALPHA, zorder=3,
     )
 
-    # Source FOV (~10 deg diameter → radius = fov/2)
-    fov_r = inp.fov_deg / 2.0
-    fov_pts = _small_circle_coords(inp.pointing, fov_r)
+    fov_pts = _small_circle_coords(inp.pointing, inp.fov_deg / 2.0)
     ra_f, dec_f = _coord_to_aitoff(fov_pts)
     ax.plot(ra_f, dec_f, color=FOV_EDGE_COLOR, lw=1.5, zorder=5)
 
@@ -462,23 +484,105 @@ def _draw_sky_axes(
     ax.plot(ra_a, dec_a, "x", color=M2_ZONE_COLOR, ms=10, mew=2, zorder=6)
 
     ax.set_title(_sky_title(label, t, status), fontsize=10, pad=12)
-
     ax.legend(
-        handles=[
-            Patch(facecolor=M1_ZONE_COLOR, alpha=M1_ZONE_ALPHA, label="Moon in M1"),
-            Patch(facecolor=M2_ZONE_COLOR, alpha=M2_ZONE_ALPHA, label="Moon in M2"),
-            Patch(facecolor=BELOW_HORIZON_COLOR, alpha=BELOW_HORIZON_ALPHA, label="Below ASTRI horizon"),
-            Line2D([0], [0], marker="*", color="w", markerfacecolor=SOURCE_COLOR, ms=10, ls="None", label="Pointing"),
-            Line2D([0], [0], marker="o", color="w", markerfacecolor=MOON_COLOR, ms=8, ls="None", label="Moon"),
-            Line2D([0], [0], marker="x", color=M2_ZONE_COLOR, ms=8, mew=2, ls="None", label="Antipode (M2 centre)"),
-            Line2D([0], [0], color=FOV_EDGE_COLOR, lw=1.5, label=f"FOV ~{inp.fov_deg:.0f}°"),
-        ],
+        handles=_sky_legend_handles(inp),
         loc="upper left",
         bbox_to_anchor=(1.02, 1.0),
         fontsize=8,
         framealpha=0.95,
     )
-    return ra_rad, dec_rad
+
+
+def _polar_zone_map(
+    pointing: SkyCoord,
+    t: Time,
+    m1_radius_deg: float,
+    m2_sep_min_deg: float,
+    m2_sep_max_deg: float,
+    alt_step_deg: float = 1.0,
+    az_step_deg: float = 1.0,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Local Alt/Az grid → (theta, zenith, m1_mask, m2_mask) for polar contourf.
+
+    Only the above-horizon sky (alt >= 0) is returned; the disk rim is the horizon.
+    """
+    alt_vals = np.arange(0.0, 90.0, alt_step_deg)
+    az_vals = np.arange(0.0, 360.0, az_step_deg)
+    alt_grid, az_grid = np.meshgrid(alt_vals, az_vals, indexing="ij")
+    frame = AltAz(obstime=t, location=OBSERVATORY_ASTRI)
+    flat = SkyCoord(alt=alt_grid.ravel() * u.deg, az=az_grid.ravel() * u.deg, frame=frame)
+    sep = flat.icrs.separation(pointing.icrs).to_value(u.deg).reshape(alt_grid.shape)
+
+    m1_mask = sep <= m1_radius_deg
+    m2_mask = (sep >= m2_sep_min_deg) & (sep <= m2_sep_max_deg)
+    zenith = 90.0 - alt_grid
+    theta = np.deg2rad(az_grid)
+    return theta, zenith, m1_mask, m2_mask
+
+
+def _draw_polar_sky_axes(
+    ax,
+    inp: ReflectionInputs,
+    label: str,
+    t: Time,
+    status: str,
+) -> None:
+    """Polar Alt/Az sky (zenith centre, N up) with the same zones/markers as Aitoff."""
+    ax.set_facecolor(SAFE_SKY_COLOR)
+    ax.set_theta_zero_location("N")
+    ax.set_theta_direction(-1)
+    # r = zenith angle: 0 at centre (zenith), 90 at rim (horizon).
+    ax.set_rlim(0, 90)
+    # Radial labels: show altitude (90 - zenith angle); they sit inside → white.
+    ax.set_yticks([0, 15, 30, 45, 60, 75, 90])
+    ax.set_yticklabels(["90", "75", "60", "45", "30", "15", "0"], fontsize=9, color="white")
+    ax.set_rlabel_position(22.5)
+    # Azimuth labels sit outside the disk → black (readable on white figure bg).
+    az_ticks = np.arange(0, 360, 30)
+    ax.set_thetagrids(az_ticks, labels=[f"{int(a)}" for a in az_ticks], fontsize=9, color="black")
+    ax.tick_params(axis="x", colors="black", labelsize=9)
+    ax.tick_params(axis="y", colors="white", labelsize=9)
+    ax.grid(True, color=GRID_COLOR, alpha=0.45, lw=0.6)
+
+    theta, zenith, m1_mask, m2_mask = _polar_zone_map(
+        inp.pointing, t, inp.m1_radius_deg, inp.m2_sep_min_deg, inp.m2_sep_max_deg,
+    )
+    ax.contourf(
+        theta, zenith, m2_mask.astype(float),
+        levels=[0.5, 1.5], colors=[M2_ZONE_COLOR], alpha=M2_ZONE_ALPHA, zorder=1,
+    )
+    ax.contourf(
+        theta, zenith, m1_mask.astype(float),
+        levels=[0.5, 1.5], colors=[M1_ZONE_COLOR], alpha=M1_ZONE_ALPHA, zorder=2,
+    )
+
+    frame = AltAz(obstime=t, location=OBSERVATORY_ASTRI)
+    # Only plot markers that are above the local horizon (no rim-clamping).
+    fov_pts = _small_circle_coords(inp.pointing, inp.fov_deg / 2.0).transform_to(frame)
+    fov_up = fov_pts.alt.to_value(u.deg) >= 0.0
+    if np.any(fov_up):
+        r_f, th_f = _altaz_to_polar(fov_pts[fov_up])
+        ax.plot(th_f, r_f, color=FOV_EDGE_COLOR, lw=1.5, zorder=5)
+
+    pnt = inp.pointing.transform_to(frame)
+    if pnt.alt.to_value(u.deg) >= 0.0:
+        r_p, th_p = _altaz_to_polar(pnt)
+        ax.plot(th_p, r_p, "*", color=SOURCE_COLOR, ms=14, zorder=6)
+
+    anti = _antipode(inp.pointing).transform_to(frame)
+    if anti.alt.to_value(u.deg) >= 0.0:
+        r_a, th_a = _altaz_to_polar(anti)
+        ax.plot(th_a, r_a, "x", color=M2_ZONE_COLOR, ms=10, mew=2, zorder=6)
+
+    ax.set_title(_sky_title(label, t, status), fontsize=10, pad=14)
+    ax.legend(
+        handles=_sky_legend_handles(inp, include_horizon=False),
+        loc="upper left",
+        bbox_to_anchor=(1.12, 1.0),
+        fontsize=8,
+        framealpha=0.95,
+    )
 
 
 def _plot_sky_snapshot(
@@ -508,93 +612,30 @@ def _plot_sky_snapshot(
     plt.close(fig)
 
 
-def _save_sky_animation(
+def _plot_sky_polar(
     path: str,
+    t: Time,
     inp: ReflectionInputs,
     label: str,
     res: dict,
-    fps: float = 2.0,
 ) -> None:
     import matplotlib.pyplot as plt
-    from matplotlib.animation import FuncAnimation, PillowWriter
 
-    times = res["times"]
-    moons = res["moon"]
-    n = len(times)
+    idx = int(np.argmin(np.abs((res["times"] - t).jd)))
+    t_plot = res["times"][idx]
+    status = "at risk" if bool(np.asarray(res["reflection_risk"])[idx]) else "safe"
 
-    fig = plt.figure(figsize=(10, 5.5))
-    ax = fig.add_subplot(111, projection="aitoff")
+    fig = plt.figure(figsize=(9, 9))
+    ax = fig.add_subplot(111, projection="polar")
+    _draw_polar_sky_axes(ax, inp, label, t_plot, status)
 
-    # Initial frame
-    status0 = "at risk" if bool(np.asarray(res["reflection_risk"])[0]) else "safe"
-    _draw_sky_axes(ax, inp, label, times[0], status0)
+    moon_altaz = res["moon_altaz"][idx]
+    if moon_altaz.alt.to_value(u.deg) >= 0.0:
+        r_m, th_m = _altaz_to_polar(moon_altaz)
+        ax.plot(th_m, r_m, "o", color=MOON_COLOR, ms=9, zorder=8)
 
-    # Precompute sky grids once; redraw zone+horizon each frame.
-    ra_grid, dec_grid, m1_mask, m2_mask = _sky_zone_map(
-        inp.pointing, inp.m1_radius_deg, inp.m2_sep_min_deg, inp.m2_sep_max_deg,
-    )
-    ra_rad = np.deg2rad(ra_grid)
-    dec_rad = np.deg2rad(dec_grid)
-
-    moon_line, = ax.plot([], [], "o", color=MOON_COLOR, ms=9, zorder=8)
-    trail_line, = ax.plot([], [], "-", color=MOON_COLOR, alpha=0.35, lw=1, zorder=7)
-
-    trail_ra: List[float] = []
-    trail_dec: List[float] = []
-    zone_artists: List = []
-
-    def _clear_zones():
-        for art in zone_artists:
-            try:
-                art.remove()
-            except Exception:
-                pass
-        zone_artists.clear()
-
-    def _update(i: int):
-        _clear_zones()
-        below = _below_horizon_mask(ra_grid, dec_grid, times[i])
-        c2 = ax.contourf(
-            ra_rad, dec_rad, (m2_mask & ~below).astype(float),
-            levels=[0.5, 1.5], colors=[M2_ZONE_COLOR], alpha=M2_ZONE_ALPHA, zorder=1,
-        )
-        c1 = ax.contourf(
-            ra_rad, dec_rad, (m1_mask & ~below).astype(float),
-            levels=[0.5, 1.5], colors=[M1_ZONE_COLOR], alpha=M1_ZONE_ALPHA, zorder=2,
-        )
-        cb = ax.contourf(
-            ra_rad, dec_rad, below.astype(float),
-            levels=[0.5, 1.5], colors=[BELOW_HORIZON_COLOR], alpha=BELOW_HORIZON_ALPHA, zorder=3,
-        )
-        for coll in (c2, c1, cb):
-            zone_artists.extend(coll.collections)
-
-        moon = moons[i]
-        ra_m, dec_m = _coord_to_aitoff(moon)
-        moon_line.set_data([ra_m], [dec_m])
-        trail_ra.append(ra_m)
-        trail_dec.append(dec_m)
-        trail_line.set_data(trail_ra, trail_dec)
-
-        in_zone = bool(np.asarray(res["reflection_risk"])[i])
-        status = "at risk" if in_zone else "safe"
-        ax.set_title(_sky_title(label, times[i], status), fontsize=10, pad=12)
-        return moon_line, trail_line
-
-    anim = FuncAnimation(fig, _update, frames=n, interval=1000.0 / fps, blit=False)
     plt.tight_layout()
-    _color_aitoff_tick_labels(ax)
-    ext = path.rsplit(".", 1)[-1].lower()
-    if ext == "gif":
-        anim.save(path, writer=PillowWriter(fps=fps), dpi=120)
-    else:
-        try:
-            anim.save(path, writer="ffmpeg", fps=fps, dpi=120)
-        except Exception:
-            gif_path = path.rsplit(".", 1)[0] + ".gif"
-            anim.save(gif_path, writer=PillowWriter(fps=fps), dpi=120)
-            print(f"ffmpeg unavailable; saved {gif_path} instead.")
-            path = gif_path
+    plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -603,7 +644,7 @@ def main() -> None:
         description=(
             "ASTRI Moon reflection veto on the celestial sphere. "
             "Reports safe time windows for a source during an astronomical night, "
-            "and optional RA/Dec sky animation."
+            "with optional Aitoff (RA/Dec) and polar (Alt/Az) sky snapshots."
         )
     )
 
@@ -657,11 +698,24 @@ def main() -> None:
 
     out = ap.add_argument_group("Outputs")
     out.add_argument("--plot", type=str, default=None, help="Save time-series plot (png/pdf).")
-    out.add_argument("--plot-sky", type=str, default=None,
-                     help="Save RA/Dec sky snapshot at mid-night.")
-    out.add_argument("--animate", type=str, default=None,
-                     help="Save animated RA/Dec sky (gif or mp4).")
-    out.add_argument("--animate-fps", type=float, default=2.0, help="Animation frames per second.")
+    out.add_argument(
+        "--plot-sky",
+        type=str,
+        default=None,
+        help="Save Aitoff RA/Dec sky snapshot at mid-night (or --sky-time).",
+    )
+    out.add_argument(
+        "--plot-sky-polar",
+        type=str,
+        default=None,
+        help="Save polar Alt/Az sky snapshot at mid-night (or --sky-time).",
+    )
+    out.add_argument(
+        "--sky-time",
+        type=str,
+        default=None,
+        help="UTC epoch for sky plots (YYYY-MM-DDTHH:MM:SS). Default: mid-night.",
+    )
 
     args = ap.parse_args()
 
@@ -734,14 +788,15 @@ def main() -> None:
         _plot_time_series(args.plot, res, inp, label)
         print(f"\nSaved time-series plot: {args.plot}")
 
+    t_mid = start + (end - start) / 2
+    t_sky = _parse_time(args.sky_time) if args.sky_time else t_mid
     if args.plot_sky:
-        t_mid = start + (end - start) / 2
-        _plot_sky_snapshot(args.plot_sky, t_mid, inp, label, res)
-        print(f"Saved sky snapshot: {args.plot_sky}")
+        _plot_sky_snapshot(args.plot_sky, t_sky, inp, label, res)
+        print(f"Saved sky snapshot (Aitoff): {args.plot_sky}")
 
-    if args.animate:
-        _save_sky_animation(args.animate, inp, label, res, fps=float(args.animate_fps))
-        print(f"Saved sky animation: {args.animate}")
+    if args.plot_sky_polar:
+        _plot_sky_polar(args.plot_sky_polar, t_sky, inp, label, res)
+        print(f"Saved sky snapshot (polar): {args.plot_sky_polar}")
 
 
 if __name__ == "__main__":
