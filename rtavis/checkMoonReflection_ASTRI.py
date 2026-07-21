@@ -27,7 +27,7 @@ OBSERVATORY_ASTRI = EarthLocation(lat=28.2983 * u.deg, lon=-16.5097 * u.deg, hei
 
 SOURCE_COLOR = "black"
 FOV_EDGE_COLOR = "black"
-MOON_COLOR = "#5dade2"  # celeste
+MOON_COLOR = "#5dade2"  
 M1_ZONE_COLOR = "#e63946"
 M2_ZONE_COLOR = "#7b2cbf"
 M1_ZONE_ALPHA = 0.65
